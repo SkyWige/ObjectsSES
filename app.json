@@ -1,13 +1,14 @@
 {
   "expo": {
-    "name": "monthly-checklist",
+    "name": "Список на месяц",
     "slug": "monthly-checklist",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.skywige.monthlychecklist"
     },
     "android": {
       "adaptiveIcon": {
@@ -16,7 +17,8 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.skywige.monthlychecklist"
     },
     "web": {
       "favicon": "./assets/favicon.png"
