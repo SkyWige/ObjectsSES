@@ -20,165 +20,85 @@ import {
   Checklist,
   clearTicks,
   createChecklist,
+  doneCount,
   formatDay,
   hasTicks,
   isResetDue,
   Item,
-  parseChecklist,
   reminderTime,
   removeItem,
   renameItem,
+  rowSummary,
+  taskCount,
   toggleItem,
+  updateItem,
 } from './src/checklist';
-import { syncReminder } from './src/reminder';
+import { CheckBox, KindPicker } from './src/controls';
+import { DetailScreen } from './src/DetailScreen';
+import { deletePhotoFiles } from './src/photos';
+import { onClearRequest, syncReminder, takeClearRequest } from './src/reminder';
+import { loadChecklist, saveChecklist } from './src/storage';
+import { Colors, TEXT_COLORS, ThemeName, THEMES } from './src/theme';
+import { updateWidgets } from './src/widgetBridge';
 
-const STORAGE_KEY = 'monthly-checklist/v1';
 const THEME_KEY = 'monthly-checklist/theme';
 const CLOCK_INTERVAL_MS = 60_000;
-const DELETE_CONFIRM_MS = 3_000;
-const MAX_TITLE_LENGTH = 200;
-
-type ThemeName = 'light' | 'dark';
-
-const THEMES = {
-  light: {
-    background: '#FFFFFF',
-    text: '#171717',
-    muted: '#666666',
-    line: '#E2E2E2',
-    accent: '#1F6FEB',
-    onAccent: '#FFFFFF',
-    bannerBackground: '#EAF2FE',
-    danger: '#C62828',
-  },
-  dark: {
-    background: '#141414',
-    text: '#F2F2F2',
-    muted: '#A3A3A3',
-    line: '#333333',
-    accent: '#7CB0FF',
-    onAccent: '#141414',
-    bannerBackground: '#1F2A3A',
-    danger: '#FF8A80',
-  },
-};
-
-type Colors = typeof THEMES.light;
-
-function CheckBox({ checked, colors }: { checked: boolean; colors: Colors }) {
-  return (
-    <View
-      style={[
-        styles.box,
-        { borderColor: checked ? colors.accent : colors.muted },
-        checked && { backgroundColor: colors.accent },
-      ]}
-    >
-      {checked && (
-        <View style={styles.tick}>
-          <View style={[styles.tickShort, { backgroundColor: colors.onAccent }]} />
-          <View style={[styles.tickLong, { backgroundColor: colors.onAccent }]} />
-        </View>
-      )}
-    </View>
-  );
-}
+const CLEAR_CONFIRM_MS = 3_000;
+const MAX_TITLE_LENGTH = 5_000;
 
 type RowProps = {
   item: Item;
   colors: Colors;
-  confirmingDelete: boolean;
+  themeName: ThemeName;
   onToggle: () => void;
-  onRename: (title: string) => void;
-  onAskDelete: () => void;
-  onDelete: () => void;
+  onOpen: () => void;
 };
 
-function Row({
-  item,
-  colors,
-  confirmingDelete,
-  onToggle,
-  onRename,
-  onAskDelete,
-  onDelete,
-}: RowProps) {
-  const [draft, setDraft] = useState<string | null>(null);
-  const editing = draft !== null;
-
-  const finishEditing = () => {
-    if (draft !== null) onRename(draft);
-    setDraft(null);
-  };
-
+function Row({ item, colors, themeName, onToggle, onOpen }: RowProps) {
+  const summary = rowSummary(item);
+  const isTask = item.kind !== 'text';
+  const baseColor = item.done ? colors.muted : colors.text;
   return (
     <View style={[styles.row, { borderBottomColor: colors.line }]}>
+      {isTask && (
+        <Pressable
+          accessibilityRole="checkbox"
+          aria-checked={item.done}
+          accessibilityLabel={item.title}
+          onPress={() => {
+            Keyboard.dismiss();
+            onToggle();
+          }}
+          style={styles.checkCell}
+        >
+          <CheckBox checked={item.done} colors={colors} />
+        </Pressable>
+      )}
+
       <Pressable
-        accessibilityRole="checkbox"
-        aria-checked={item.done}
-        accessibilityLabel={item.title}
+        accessibilityRole="button"
+        accessibilityLabel={`Подробнее: ${item.title}`}
         onPress={() => {
           Keyboard.dismiss();
-          onToggle();
+          onOpen();
         }}
-        style={styles.checkCell}
+        style={[styles.rowBody, !isTask && styles.rowBodyPlain]}
       >
-        <CheckBox checked={item.done} colors={colors} />
-      </Pressable>
-
-      <View style={styles.rowBody}>
-        {editing ? (
-          <TextInput
-            accessibilityLabel="Текст строки"
-            autoFocus
-            multiline
-            value={draft}
-            onChangeText={setDraft}
-            onBlur={finishEditing}
-            submitBehavior="blurAndSubmit"
-            returnKeyType="done"
-            maxLength={MAX_TITLE_LENGTH}
-            style={[styles.title, styles.titleInput, { color: colors.text, borderBottomColor: colors.accent }]}
-          />
-        ) : (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Изменить: ${item.title}`}
-            onPress={() => setDraft(item.title)}
+        <View style={styles.rowText}>
+          <Text
+            numberOfLines={2}
+            style={[
+              styles.title,
+              { color: item.color ? TEXT_COLORS[themeName][item.color] : baseColor },
+              item.done && styles.titleDone,
+            ]}
           >
-            <Text
-              style={[
-                styles.title,
-                { color: item.done ? colors.muted : colors.text },
-                item.done && styles.titleDone,
-              ]}
-            >
-              {item.title}
-            </Text>
-          </Pressable>
-        )}
-        {item.done && item.doneAt !== undefined && (
-          <Text style={[styles.doneDate, { color: colors.muted }]}>
-            Отмечено {formatDay(item.doneAt)}
+            {item.title}
           </Text>
-        )}
-      </View>
-
-      {!editing &&
-        (confirmingDelete ? (
-          <Pressable accessibilityRole="button" onPress={onDelete} style={styles.deleteButton}>
-            <Text style={[styles.deleteConfirm, { color: colors.danger }]}>Удалить</Text>
-          </Pressable>
-        ) : (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Удалить: ${item.title}`}
-            onPress={onAskDelete}
-            style={styles.deleteButton}
-          >
-            <Text style={[styles.deleteIcon, { color: colors.muted }]}>×</Text>
-          </Pressable>
-        ))}
+          {summary && <Text style={[styles.summary, { color: colors.muted }]}>{summary}</Text>}
+        </View>
+        <Text style={[styles.chevron, { color: colors.muted }]}>›</Text>
+      </Pressable>
     </View>
   );
 }
@@ -193,37 +113,58 @@ function ChecklistScreen() {
   const [loadFailed, setLoadFailed] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
   const [draft, setDraft] = useState('');
-  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [draftKind, setDraftKind] = useState<'task' | 'text'>('task');
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [confirmingClear, setConfirmingClear] = useState(false);
   const listRef = useRef<FlatList<Item>>(null);
   const scrollToNewItem = useRef(false);
+  // Bumped by every change to the list, so a slower reload from storage cannot undo it.
+  const loadGeneration = useRef(0);
+  const detailOpen = useRef(false);
+  detailOpen.current = openId !== null;
 
   const themeName: ThemeName = themeChoice ?? (systemTheme === 'dark' ? 'dark' : 'light');
   const colors = THEMES[themeName];
 
+  const load = () => {
+    const generation = loadGeneration.current;
+    return loadChecklist().then((saved) => {
+      if (generation !== loadGeneration.current) return;
+      const loaded = saved ?? createChecklist(Date.now());
+      setList(takeClearRequest() ? clearTicks(loaded, Date.now()) : loaded);
+    });
+  };
+
   useEffect(() => {
-    AsyncStorage.multiGet([STORAGE_KEY, THEME_KEY])
-      .then(([[, rawList], [, rawTheme]]) => {
-        if (rawTheme === 'light' || rawTheme === 'dark') setThemeChoice(rawTheme);
-        const saved = rawList === null ? null : parseChecklist(rawList);
-        setList(saved ?? createChecklist(Date.now()));
+    AsyncStorage.getItem(THEME_KEY)
+      .then((raw) => {
+        if (raw === 'light' || raw === 'dark') setThemeChoice(raw);
       })
-      // Nothing is saved after this, so a temporary read error cannot wipe the real list.
-      .catch(() => setLoadFailed(true));
+      .catch(() => {});
+    // Nothing is saved after a failed read, so a temporary error cannot wipe the real list.
+    load().catch(() => setLoadFailed(true));
   }, []);
 
   useEffect(() => {
     if (!list) return;
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(list))
+    loadGeneration.current += 1;
+    saveChecklist(list)
       .then(() => setSaveFailed(false))
       .catch(() => setSaveFailed(true));
+    updateWidgets(list);
   }, [list]);
 
-  // Covers both a phone left open past the reminder date and a return from the background.
+  // Covers a phone left open past the reminder date, a return from the background,
+  // and ticks changed from a widget while the app was in the background.
   useEffect(() => {
     const tick = () => setNow(Date.now());
     const timer = setInterval(tick, CLOCK_INTERVAL_MS);
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') tick();
+      if (state !== 'active') return;
+      tick();
+      // The photo picker also sends the app to the background and back. Reloading then
+      // could race with the photo being added, so wait until the detail screen is closed.
+      if (!detailOpen.current) load().catch(() => {});
     });
     return () => {
       clearInterval(timer);
@@ -231,11 +172,20 @@ function ChecklistScreen() {
     };
   }, []);
 
+  useEffect(
+    () =>
+      onClearRequest(() => {
+        loadGeneration.current += 1;
+        setList((current) => current && clearTicks(current, Date.now()));
+      }),
+    [],
+  );
+
   useEffect(() => {
-    if (!confirmingId) return;
-    const timer = setTimeout(() => setConfirmingId(null), DELETE_CONFIRM_MS);
+    if (!confirmingClear) return;
+    const timer = setTimeout(() => setConfirmingClear(false), CLEAR_CONFIRM_MS);
     return () => clearTimeout(timer);
-  }, [confirmingId]);
+  }, [confirmingClear]);
 
   const ticked = list !== null && hasTicks(list);
   const due = list !== null && isResetDue(list, now);
@@ -256,8 +206,14 @@ function ChecklistScreen() {
     if (!list || !draft.trim()) return;
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     scrollToNewItem.current = true;
-    setList(addItem(list, draft, id));
+    setList(addItem(list, draft, id, draftKind));
     setDraft('');
+  };
+
+  const clearAll = () => {
+    Keyboard.dismiss();
+    setConfirmingClear(false);
+    setList((current) => current && clearTicks(current, Date.now()));
   };
 
   const toggleTheme = () => {
@@ -278,7 +234,8 @@ function ChecklistScreen() {
     );
   }
 
-  const doneCount = list.items.filter((item) => item.done).length;
+  const tasks = taskCount(list);
+  const openItem = list.items.find((item) => item.id === openId);
 
   return (
     <KeyboardAvoidingView
@@ -298,15 +255,26 @@ function ChecklistScreen() {
             </Text>
           </Pressable>
         </View>
-        {list.items.length > 0 && (
+        {tasks > 0 && (
           <Text style={[styles.subheading, { color: colors.muted }]}>
-            Выполнено {doneCount} из {list.items.length}
+            Выполнено {doneCount(list)} из {tasks}
           </Text>
         )}
         {!due && (
           <Text style={[styles.subheading, { color: colors.muted }]}>
             Напоминание снять галочки: {formatDay(list.nextResetAt)}
           </Text>
+        )}
+        {ticked && !due && (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => (confirmingClear ? clearAll() : setConfirmingClear(true))}
+            style={styles.clearButton}
+          >
+            <Text style={[styles.clearLabel, { color: colors.accent }]}>
+              {confirmingClear ? 'Нажмите ещё раз, чтобы снять' : 'Снять все галочки'}
+            </Text>
+          </Pressable>
         )}
       </View>
 
@@ -317,10 +285,7 @@ function ChecklistScreen() {
           </Text>
           <Pressable
             accessibilityRole="button"
-            onPress={() => {
-              Keyboard.dismiss();
-              setList((current) => current && clearTicks(current, Date.now()));
-            }}
+            onPress={clearAll}
             style={[styles.bannerButton, { backgroundColor: colors.accent }]}
           >
             <Text style={[styles.bannerButtonLabel, { color: colors.onAccent }]}>
@@ -352,17 +317,11 @@ function ChecklistScreen() {
           <Row
             item={item}
             colors={colors}
-            confirmingDelete={confirmingId === item.id}
-            onToggle={() => {
-              setConfirmingId(null);
-              setList((current) => current && toggleItem(current, item.id, Date.now()));
-            }}
-            onRename={(title) => setList((current) => current && renameItem(current, item.id, title))}
-            onAskDelete={() => setConfirmingId(item.id)}
-            onDelete={() => {
-              setConfirmingId(null);
-              setList((current) => current && removeItem(current, item.id));
-            }}
+            themeName={themeName}
+            onToggle={() =>
+              setList((current) => current && toggleItem(current, item.id, Date.now()))
+            }
+            onOpen={() => setOpenId(item.id)}
           />
         )}
       />
@@ -379,29 +338,54 @@ function ChecklistScreen() {
           { borderTopColor: colors.line, paddingBottom: Math.max(insets.bottom, 8) },
         ]}
       >
-        <TextInput
-          accessibilityLabel="Новая строка"
-          value={draft}
-          onChangeText={setDraft}
-          onSubmitEditing={submit}
-          submitBehavior="submit"
-          returnKeyType="done"
-          placeholder="Новая строка"
-          placeholderTextColor={colors.muted}
-          maxLength={MAX_TITLE_LENGTH}
-          style={[styles.input, { color: colors.text }]}
-        />
-        <Pressable
-          accessibilityRole="button"
-          disabled={!draft.trim()}
-          onPress={submit}
-          style={styles.addButton}
-        >
-          <Text style={[styles.addLabel, { color: draft.trim() ? colors.accent : colors.muted }]}>
-            Добавить
-          </Text>
-        </Pressable>
+        <View style={styles.composerKind}>
+          <KindPicker value={draftKind} colors={colors} onChange={setDraftKind} />
+        </View>
+        <View style={styles.composerRow}>
+          <TextInput
+            accessibilityLabel="Новая строка"
+            value={draft}
+            onChangeText={setDraft}
+            onSubmitEditing={submit}
+            submitBehavior="submit"
+            returnKeyType="done"
+            placeholder="Новая строка"
+            placeholderTextColor={colors.muted}
+            maxLength={MAX_TITLE_LENGTH}
+            style={[styles.input, { color: colors.text }]}
+          />
+          <Pressable
+            accessibilityRole="button"
+            disabled={!draft.trim()}
+            onPress={submit}
+            style={styles.addButton}
+          >
+            <Text style={[styles.addLabel, { color: draft.trim() ? colors.accent : colors.muted }]}>
+              Добавить
+            </Text>
+          </Pressable>
+        </View>
       </View>
+
+      {openItem && (
+        <DetailScreen
+          key={openItem.id}
+          item={openItem}
+          colors={colors}
+          themeName={themeName}
+          onClose={() => setOpenId(null)}
+          onToggle={() =>
+            setList((current) => current && toggleItem(current, openItem.id, Date.now()))
+          }
+          onRename={(title) => setList((current) => current && renameItem(current, openItem.id, title))}
+          onUpdate={(update) => setList((current) => current && updateItem(current, openItem.id, update))}
+          onDelete={() => {
+            setOpenId(null);
+            setList((current) => current && removeItem(current, openItem.id));
+            deletePhotoFiles(openItem.photos ?? []);
+          }}
+        />
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -430,7 +414,7 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: 16,
-    paddingBottom: 12,
+    paddingBottom: 8,
     borderBottomWidth: 1,
   },
   headerTop: {
@@ -457,6 +441,15 @@ const styles = StyleSheet.create({
   subheading: {
     fontSize: 14,
     lineHeight: 20,
+  },
+  clearButton: {
+    minHeight: 44,
+    justifyContent: 'center',
+    alignSelf: 'flex-start',
+  },
+  clearLabel: {
+    fontSize: 15,
+    fontWeight: '600',
   },
   banner: {
     paddingHorizontal: 16,
@@ -497,72 +490,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  box: {
-    width: 24,
-    height: 24,
-    borderWidth: 2,
-    borderRadius: 6,
-  },
-  tick: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    width: 20,
-    height: 20,
-  },
-  tickShort: {
-    position: 'absolute',
-    left: 2,
-    top: 11,
-    width: 8,
-    height: 2.5,
-    borderRadius: 2,
-    transform: [{ rotate: '45deg' }],
-  },
-  tickLong: {
-    position: 'absolute',
-    left: 5,
-    top: 9,
-    width: 14,
-    height: 2.5,
-    borderRadius: 2,
-    transform: [{ rotate: '-50deg' }],
-  },
   rowBody: {
     flex: 1,
     minWidth: 0,
-    justifyContent: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingVertical: 10,
+    paddingRight: 12,
+  },
+  rowBodyPlain: {
+    paddingLeft: 16,
+  },
+  rowText: {
+    flex: 1,
+    minWidth: 0,
   },
   title: {
     fontSize: 17,
     lineHeight: 24,
   },
-  titleInput: {
-    padding: 0,
-    borderBottomWidth: 1.5,
-  },
   titleDone: {
     textDecorationLine: 'line-through',
   },
-  doneDate: {
+  summary: {
     marginTop: 2,
     fontSize: 13,
     lineHeight: 18,
   },
-  deleteButton: {
-    minWidth: 48,
-    paddingHorizontal: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  deleteIcon: {
+  chevron: {
+    marginLeft: 8,
     fontSize: 24,
     lineHeight: 28,
-  },
-  deleteConfirm: {
-    fontSize: 15,
-    fontWeight: '600',
   },
   saveError: {
     paddingHorizontal: 16,
@@ -571,10 +529,16 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   composer: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingTop: 8,
     borderTopWidth: 1,
+  },
+  composerKind: {
+    paddingHorizontal: 16,
+    paddingBottom: 4,
+  },
+  composerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   input: {
     flex: 1,

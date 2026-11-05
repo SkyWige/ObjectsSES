@@ -1,9 +1,24 @@
+export const TEXT_COLOR_NAMES = ['red', 'orange', 'green', 'blue', 'purple'] as const;
+export type TextColorName = (typeof TEXT_COLOR_NAMES)[number];
+
+export type Note = {
+  id: string;
+  text: string;
+};
+
 export type Item = {
   id: string;
   title: string;
   done: boolean;
   /** When the tick was set. Missing on ticks saved by versions that did not record it. */
   doneAt?: number;
+  /** 'text' is a plain row without a checkbox. Rows without this field have a checkbox. */
+  kind?: 'text';
+  /** Missing means the theme's normal text colour. */
+  color?: TextColorName;
+  notes?: Note[];
+  /** Photo file names. See src/photos.ts for where the files live. */
+  photos?: string[];
 };
 
 export type Checklist = {
@@ -68,34 +83,108 @@ export function reminderTime(list: Checklist, now: number): number {
   return new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1, REMINDER_HOUR).getTime();
 }
 
-export function addItem(list: Checklist, title: string, id: string): Checklist {
+export function addItem(
+  list: Checklist,
+  title: string,
+  id: string,
+  kind: 'task' | 'text' = 'task',
+): Checklist {
   const trimmed = title.trim();
   if (!trimmed) return list;
-  return { ...list, items: [...list.items, { id, title: trimmed, done: false }] };
+  const item: Item = { id, title: trimmed, done: false };
+  if (kind === 'text') item.kind = 'text';
+  return { ...list, items: [...list.items, item] };
 }
 
 /** A blank title is ignored, so clearing the text cannot lose the row by accident. */
 export function renameItem(list: Checklist, id: string, title: string): Checklist {
-  const trimmed = title.replace(/\s*\n\s*/g, ' ').trim();
+  const trimmed = title.trim();
   if (!trimmed) return list;
+  return updateItem(list, id, (item) => ({ ...item, title: trimmed }));
+}
+
+export function updateItem(list: Checklist, id: string, update: (item: Item) => Item): Checklist {
   return {
     ...list,
-    items: list.items.map((item) => (item.id === id ? { ...item, title: trimmed } : item)),
+    items: list.items.map((item) => (item.id === id ? update(item) : item)),
   };
 }
 
-export function toggleItem(list: Checklist, id: string, now: number): Checklist {
+/** A plain text row cannot hold a tick, so switching to it removes the tick and its date. */
+export function withKind(item: Item, kind: 'task' | 'text'): Item {
+  const { doneAt: _doneAt, kind: _kind, ...rest } = item;
+  if (kind === 'text') return { ...rest, done: false, kind: 'text' };
+  return item.done ? { ...rest, done: true, ...(item.doneAt ? { doneAt: item.doneAt } : {}) } : rest;
+}
+
+export function withColor(item: Item, color: TextColorName | null): Item {
+  const { color: _color, ...rest } = item;
+  return color ? { ...rest, color } : rest;
+}
+
+export function addNote(item: Item, id: string, text: string): Item {
+  const trimmed = text.trim();
+  if (!trimmed) return item;
+  return { ...item, notes: [...(item.notes ?? []), { id, text: trimmed }] };
+}
+
+export function editNote(item: Item, id: string, text: string): Item {
+  const trimmed = text.trim();
+  if (!trimmed) return item;
   return {
-    ...list,
-    items: list.items.map((item) => {
-      if (item.id !== id) return item;
-      if (item.done) {
-        const { doneAt: _doneAt, ...rest } = item;
-        return { ...rest, done: false };
-      }
-      return { ...item, done: true, doneAt: now };
-    }),
+    ...item,
+    notes: (item.notes ?? []).map((note) => (note.id === id ? { ...note, text: trimmed } : note)),
   };
+}
+
+export function removeNote(item: Item, id: string): Item {
+  return { ...item, notes: (item.notes ?? []).filter((note) => note.id !== id) };
+}
+
+export function addPhotos(item: Item, photos: string[]): Item {
+  return { ...item, photos: [...(item.photos ?? []), ...photos] };
+}
+
+export function removePhoto(item: Item, photo: string): Item {
+  return { ...item, photos: (item.photos ?? []).filter((name) => name !== photo) };
+}
+
+/** Rows that take part in the "done X of Y" count. */
+export function taskCount(list: Checklist): number {
+  return list.items.filter((item) => item.kind !== 'text').length;
+}
+
+export function doneCount(list: Checklist): number {
+  return list.items.filter((item) => item.done).length;
+}
+
+function pluralNotes(count: number): string {
+  const tens = count % 100;
+  const ones = count % 10;
+  if (tens >= 11 && tens <= 14) return `${count}\u00A0заметок`;
+  if (ones === 1) return `${count}\u00A0заметка`;
+  if (ones >= 2 && ones <= 4) return `${count}\u00A0заметки`;
+  return `${count}\u00A0заметок`;
+}
+
+/** The short line under a row in the list, or null if there is nothing to show. */
+export function rowSummary(item: Item): string | null {
+  const parts: string[] = [];
+  if (item.done && item.doneAt !== undefined) parts.push(`Отмечено ${formatDay(item.doneAt)}`);
+  if (item.photos?.length) parts.push(`${item.photos.length}\u00A0фото`);
+  if (item.notes?.length) parts.push(pluralNotes(item.notes.length));
+  return parts.length ? parts.join(', ') : null;
+}
+
+export function toggleItem(list: Checklist, id: string, now: number): Checklist {
+  return updateItem(list, id, (item) => {
+    if (item.kind === 'text') return item;
+    if (item.done) {
+      const { doneAt: _doneAt, ...rest } = item;
+      return { ...rest, done: false };
+    }
+    return { ...item, done: true, doneAt: now };
+  });
 }
 
 export function removeItem(list: Checklist, id: string): Checklist {
@@ -110,7 +199,12 @@ function isItem(value: unknown): value is Item {
     typeof item.id === 'string' &&
     typeof item.title === 'string' &&
     typeof item.done === 'boolean' &&
-    (item.doneAt === undefined || Number.isFinite(item.doneAt))
+    (item.doneAt === undefined || Number.isFinite(item.doneAt)) &&
+    (item.notes === undefined ||
+      (Array.isArray(item.notes) &&
+        item.notes.every((note) => typeof note?.id === 'string' && typeof note?.text === 'string'))) &&
+    (item.photos === undefined ||
+      (Array.isArray(item.photos) && item.photos.every((photo) => typeof photo === 'string')))
   );
 }
 

@@ -4,16 +4,27 @@ import { test } from 'node:test';
 import {
   addItem,
   addMonths,
+  addNote,
+  addPhotos,
   clearTicks,
   createChecklist,
+  doneCount,
+  editNote,
   formatDay,
   hasTicks,
   isResetDue,
   parseChecklist,
   reminderTime,
   removeItem,
+  removeNote,
+  removePhoto,
   renameItem,
+  rowSummary,
+  taskCount,
   toggleItem,
+  updateItem,
+  withColor,
+  withKind,
 } from './checklist.ts';
 
 const at = (year: number, month: number, day: number, hour = 0) =>
@@ -81,7 +92,7 @@ test('renaming trims the text, keeps the tick and ignores blank text', () => {
   assert.equal(renamed.items[0].title, 'Вода');
   assert.equal(renamed.items[0].done, true);
   assert.equal(renameItem(list, 'a', '   '), list);
-  assert.equal(renameItem(list, 'a', 'Вода\nи соль\n').items[0].title, 'Вода и соль');
+  assert.equal(renameItem(list, 'a', 'Вода\nи соль\n').items[0].title, 'Вода\nи соль');
 });
 
 test('blank titles are ignored when adding', () => {
@@ -106,6 +117,80 @@ test('saved data survives a round trip and bad data is rejected', () => {
 test('a list saved by the previous version still loads', () => {
   const saved = '{"items":[{"id":"a","title":"A","done":true}],"anchor":1,"nextResetAt":2}';
   assert.equal(parseChecklist(saved)?.items[0].done, true);
+});
+
+test('plain text rows cannot be ticked and stay out of the count', () => {
+  const now = at(2026, 11, 5);
+  let list = addItem(addItem(createChecklist(now), 'Заголовок', 't', 'text'), 'Дело', 'a');
+  list = toggleItem(toggleItem(list, 't', now), 'a', now);
+  assert.equal(list.items[0].done, false);
+  assert.equal(taskCount(list), 1);
+  assert.equal(doneCount(list), 1);
+});
+
+test('switching a row to plain text drops its tick, and back keeps it plain', () => {
+  const now = at(2026, 11, 5);
+  const text = withKind(withTickedItem(now).items[0], 'text');
+  assert.equal(text.kind, 'text');
+  assert.equal(text.done, false);
+  assert.equal('doneAt' in text, false);
+  const task = withKind(text, 'task');
+  assert.equal('kind' in task, false);
+  assert.equal(task.done, false);
+});
+
+test('switching kind to task keeps an existing tick', () => {
+  const now = at(2026, 11, 5);
+  const task = withKind(withTickedItem(now).items[0], 'task');
+  assert.equal(task.done, true);
+  assert.equal(task.doneAt, now);
+});
+
+test('colours can be set and removed', () => {
+  const item = addItem(createChecklist(at(2026, 11, 5)), 'A', 'a').items[0];
+  assert.equal(withColor(item, 'red').color, 'red');
+  assert.equal('color' in withColor(withColor(item, 'red'), null), false);
+});
+
+test('notes can be added, edited and removed; blank text changes nothing', () => {
+  const base = addItem(createChecklist(at(2026, 11, 5)), 'A', 'a').items[0];
+  const item = addNote(base, 'n', ' Первая ');
+  assert.equal(item.notes?.[0].text, 'Первая');
+  assert.equal(addNote(item, 'x', '   '), item);
+  assert.equal(editNote(item, 'n', 'Вторая').notes?.[0].text, 'Вторая');
+  assert.equal(editNote(item, 'n', '  ').notes?.[0].text, 'Первая');
+  assert.deepEqual(removeNote(item, 'n').notes, []);
+});
+
+test('photos can be added and removed', () => {
+  const base = addItem(createChecklist(at(2026, 11, 5)), 'A', 'a').items[0];
+  const item = addPhotos(base, ['1.jpg', '2.jpg']);
+  assert.deepEqual(removePhoto(item, '1.jpg').photos, ['2.jpg']);
+});
+
+test('the row summary lists the date, photos and notes in compact form', () => {
+  const now = at(2026, 11, 7);
+  let list = withTickedItem(now);
+  assert.equal(rowSummary(list.items[0]), 'Отмечено 7\u00A0ноября');
+  list = updateItem(list, 'a', (item) => addPhotos(addNote(item, 'n', 'Текст'), ['1.jpg', '2.jpg']));
+  assert.equal(rowSummary(list.items[0]), 'Отмечено 7\u00A0ноября, 2\u00A0фото, 1\u00A0заметка');
+  const plain = addItem(createChecklist(now), 'B', 'b').items[0];
+  assert.equal(rowSummary(plain), null);
+  const notes = ['a', 'b', 'c', 'd', 'e'].reduce((item, id) => addNote(item, id, 'x'), plain);
+  assert.equal(rowSummary(notes), '5\u00A0заметок');
+});
+
+test('attachments and colours survive saving, and clearing ticks keeps them', () => {
+  const now = at(2026, 11, 5);
+  const list = updateItem(withTickedItem(now), 'a', (item) =>
+    withColor(addPhotos(addNote(item, 'n', 'Текст'), ['1.jpg']), 'green'),
+  );
+  assert.deepEqual(parseChecklist(JSON.stringify(list)), list);
+  const cleared = clearTicks(list, at(2026, 12, 5)).items[0];
+  assert.equal(cleared.done, false);
+  assert.equal(cleared.color, 'green');
+  assert.deepEqual(cleared.photos, ['1.jpg']);
+  assert.equal(cleared.notes?.length, 1);
 });
 
 test('dates are written in Russian', () => {

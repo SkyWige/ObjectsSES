@@ -2,14 +2,14 @@
   "expo": {
     "name": "Список на месяц",
     "slug": "monthly-checklist",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.skywige.monthlychecklist",
-      "buildNumber": "2"
+      "buildNumber": "3"
     },
     "android": {
       "adaptiveIcon": {
@@ -20,14 +20,51 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.skywige.monthlychecklist",
-      "versionCode": 2
+      "versionCode": 3
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-notifications",
-      "expo-system-ui"
+      "expo-system-ui",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Приложению нужен доступ к фото, чтобы прикреплять их к строкам списка.",
+          "cameraPermission": "Приложению нужна камера, чтобы прикреплять снимки к строкам списка.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "react-native-android-widget",
+        {
+          "widgets": [
+            {
+              "name": "ChecklistList",
+              "label": "Список",
+              "description": "Строки списка с галочками",
+              "minWidth": "250dp",
+              "minHeight": "110dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 2,
+              "resizeMode": "horizontal|vertical",
+              "updatePeriodMillis": 21600000
+            },
+            {
+              "name": "ChecklistSummary",
+              "label": "Сводка",
+              "description": "Сколько строк выполнено и дата напоминания",
+              "minWidth": "110dp",
+              "minHeight": "50dp",
+              "targetCellWidth": 2,
+              "targetCellHeight": 1,
+              "resizeMode": "horizontal|vertical",
+              "updatePeriodMillis": 21600000
+            }
+          ]
+        }
+      ]
     ]
   }
 }
